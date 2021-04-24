@@ -6,4 +6,7 @@
 **Note**: for v17 and earlier, move `manifest.json` to `Contents`
 
 # 4d-plugin-native-encoding-detection
-TECSniffTextEncoding, DetectInputCodepage
+
+Detect text encoding of BLOB.
+
+[TECSniffTextEncoding](https://developer.apple.com/documentation/coreservices/1571836-tecsnifftextencoding?language=objc) on Mac, [DetectInputCodepage](https://docs.microsoft.com/en-us/previous-versions/windows/embedded/ms902550(v=msdn.10) on Windows.
