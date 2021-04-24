@@ -11,4 +11,6 @@ Detect text encoding of BLOB.
 
 [TECSniffTextEncoding](https://developer.apple.com/documentation/coreservices/1571836-tecsnifftextencoding?language=objc) on Mac, [DetectInputCodepage](https://docs.microsoft.com/en-us/previous-versions/windows/internet-explorer/ie-developer/platform-apis/aa740986%28v=vs.85%29) on Windows.
 
+### Syntax
+
 [miyako.github.io](https://miyako.github.io/2021/04/24/4d-plugin-native-encoding-detection.html)
