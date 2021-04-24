@@ -1,0 +1,11 @@
+{
+    "name": "Native Encoding Detection",
+    "id": 20000,
+    "commands": [
+        {
+            "theme": "Native Encoding Detection",
+            "syntax": "NED Detect encoding(&O;&J):J",
+            "threadSafe": true
+        }
+    ]
+}
