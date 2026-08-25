@@ -11,6 +11,21 @@
 #ifndef PLUGIN_NATIVE_ENCODING_DETECTION_H
 #define PLUGIN_NATIVE_ENCODING_DETECTION_H
 
+#if VERSIONWIN
+// Must come before anything that can transitively include <windows.h>
+// (4DPluginAPI.h, then <mlang.h> below both can). <windows.h> auto-includes
+// the legacy <winsock.h> unless WIN32_LEAN_AND_MEAN is already defined or
+// <winsock2.h> has already been included. <mlang.h>'s own include chain in
+// current Windows SDKs (confirmed against 10.0.26100.0 in CI) pulls in
+// <winsock2.h>/<ws2tcpip.h>. Getting both winsock generations into one TU is
+// what produces the "struct type redefinition" / "redefinition; different
+// linkage" cascade — <winsock.h> guards itself against a prior <winsock2.h>
+// inclusion via _WINSOCKAPI_, so including it first here neutralizes any
+// later attempt to pull in the old header, regardless of what 4DPluginAPI.h
+// or <mlang.h> do internally.
+#include <winsock2.h>
+#endif
+
 #include "4DPluginAPI.h"
 
 #if VERSIONWIN
