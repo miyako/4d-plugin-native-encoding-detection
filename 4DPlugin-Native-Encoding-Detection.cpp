@@ -87,6 +87,13 @@ static void collection_push(PA_CollectionRef c, PA_ObjectRef value) {
     }
 }
 
+// Sanity ceiling on the accepted BLOB size. Detection only ever needs to look
+// at a sample of the source text; without a cap, a caller (accidentally or
+// otherwise) passing a very large BLOB forces an equally large allocation and
+// copy on the calling thread, which can freeze the host process before the
+// allocation even fails. 256 MB is generous for text-encoding sniffing.
+static const PA_long32 NED_MAX_BLOB_SIZE = 256L * 1024L * 1024L;
+
 void NED_Detect_encoding(PA_PluginParameters params) {
 
     PA_ObjectRef returnValue = PA_CreateObject();
@@ -94,196 +101,242 @@ void NED_Detect_encoding(PA_PluginParameters params) {
     
     PA_long32 len = PA_GetBlobParameter(params, 1, NULL);
     
-    if(len)
+    if(len > 0 && len <= NED_MAX_BLOB_SIZE)
     {
-        std::vector<uint8_t>buf(len);
-        void *bytes = &buf[0];
-        PA_GetBlobParameter(params, 1, bytes);
-
-        PA_ObjectRef options = PA_GetObjectParameter(params, 2);
-#if VERSIONWIN
-        DWORD dwFlag = 0L;
-        DWORD dwPrefWinCodePage = 0L;
-#endif
-        if(options) {
-#if VERSIONWIN
-            if(ob_is_defined(options, L"sourceTextType")) {
-                CUTF8String _u8;
-                if(ob_get_s(options, L"sourceTextType", &_u8)) {
-                    if(_u8 == (const uint8_t *)"7bit") {
-                        dwFlag = MLDETECTCP_7BIT;
-                    }
-                    if(_u8 == (const uint8_t *)"8bit") {
-                        dwFlag = MLDETECTCP_8BIT;
-                    }
-                    if(_u8 == (const uint8_t *)"dbcs") {
-                        dwFlag = MLDETECTCP_DBCS;
-                    }
-                    if(_u8 == (const uint8_t *)"html") {
-                        dwFlag = MLDETECTCP_HTML;
-                    }
-                }
-            }
-            if(ob_is_defined(options, L"preferredCodePage")) {
-                dwPrefWinCodePage = ob_get_n(options, L"preferredCodePage");
-            }
-#endif
-
-
-        }
-        
-        
-        
-#if VERSIONWIN
-    
-    IMultiLanguage2 *mlang = NULL;
-    CoCreateInstance(CLSID_CMultiLanguage, NULL, CLSCTX_INPROC_SERVER, IID_IMultiLanguage2, (void **)&mlang);
-    
-    if(mlang)
-    {
-        int scores = count_windows_encodings;
-        std::vector<DetectEncodingInfo> encodings(scores);
-		INT size = len;
-        mlang->DetectInputCodepage(MLDETECTCP_NONE, 0, (CHAR *)bytes, (INT *)&size, &encodings[0], &scores);
-        
-        //no HRESULT?
-        for(int i = 0; i < scores ; ++i)
+        try
         {
-            if(encodings[i].nLangID != 0)
-            {
-                DetectEncodingInfo encoding = encodings[i];
-                
-                MIMECPINFO codePageInfo;
-                if(S_OK == mlang->GetCodePageInfo(encoding.nCodePage, encoding.nLangID, &codePageInfo)) {
-                    
-                    PA_ObjectRef o = PA_CreateObject();
-                    //DetectEncodingInfo
-					UINT language = encoding.nLangID;
-					if (language == (UINT)-1) {
-						ob_set_n(o, L"language", -1);
-					}
-					else
-					{
-						ob_set_n(o, L"language", language);
-					}
-                    ob_set_n(o, L"code", encoding.nCodePage);
-                    ob_set_n(o, L"percentage", encoding.nDocPercent);
-                    ob_set_n(o, L"confidence", encoding.nConfidence);
-                    //MIMECPINFO
-//                    ob_set_n(o, L"familyCodePage", codePageInfo.uiFamilyCodePage);
-                    ob_set_a(o, L"name", codePageInfo.wszDescription);
-                    ob_set_a(o, L"charset", codePageInfo.wszWebCharset);
-//                    ob_set_a(o, L"headerCharset", codePageInfo.wszHeaderCharset);
-//                    ob_set_a(o, L"bodyCharset", codePageInfo.wszBodyCharset);
-                    ob_set_a(o, L"fixedWidthFont", codePageInfo.wszFixedWidthFont);
-                    ob_set_a(o, L"proportionalFont", codePageInfo.wszProportionalFont);
-                    
-                    collection_push(results, o);
-                }
-            }
-        }
+            std::vector<uint8_t>buf(len);
+            void *bytes = &buf[0];
+            PA_GetBlobParameter(params, 1, bytes);
 
-        mlang->Release();
-    }
-#else
-        ItemCount count = count_windows_encodings;
-        ItemCount num;
-
-        std::vector<TextEncoding> _encodings(count);
-        TextEncoding *encodings = &_encodings[0];
-        
-        TECGetAvailableTextEncodings(encodings, count, &num);
-        TECSnifferObjectRef sniffer;
-        
-        if(!TECCreateSniffer(&sniffer, encodings, num)) {
-            ItemCount numTextEncodings = num;
-            ItemCount maxErrs = len;
-            ItemCount maxFeatures = len;
-            std::vector<ItemCount> _numErrsArray(count);
-            ItemCount *numErrsArray = &_numErrsArray[0];
-            std::vector<ItemCount> _numFeaturesArray(count);
-            ItemCount *numFeaturesArray = &_numFeaturesArray[0];
-            OSStatus status = TECSniffTextEncoding(sniffer,
-                                                   (ConstTextPtr)bytes,
-                                                   (ByteCount)len,
-                                                   encodings,
-                                                   numTextEncodings,
-                                                   numErrsArray,
-                                                   maxErrs,
-                                                   numFeaturesArray,
-                                                   maxFeatures);
-            if(!status){
-                ByteCount length = 0L;
-                TextEncoding unicode = CreateTextEncoding(kTextEncodingUnicodeDefault,
-                                                          kTextEncodingDefaultVariant,
-                                                          kUnicodeUTF8Format);
-                for(unsigned int i = 0; i < numTextEncodings; ++i)
-                {
-                    if(numErrsArray[i]){
-                        break;
-                    }else{
-                        
-                        TextEncoding encoding = encodings[i];
-
-                        PA_ObjectRef o = PA_CreateObject();
-                        
-                        /*
-                         std::vector<char> _buf(MAX_LENGTH_FOR_ENCODING_NAME);
-                         if(!GetTextEncodingName(
-                                                 encoding,
-                                                 kTextEncodingFullName,
-                                                 0,
-                                                 unicode,
-                                                 MAX_LENGTH_FOR_ENCODING_NAME,
-                                                 &length,
-                                                 NULL,
-                                                 NULL,
-                                                 (TextPtr)&_buf[0]))
-                         {
-                             CUTF8String u8 = CUTF8String((const uint8_t *)&_buf[0], length);
-                             ob_set_s(o, L"name", (const char *)u8.c_str());
-                         }
-                         */
-
-                        NSString *name = (NSString *)CFStringGetNameOfEncoding((CFStringEncoding)encoding);
-                        ob_set_s(o, L"name", (const char *)[name UTF8String]);
-                        
-                        ScriptCode TextScriptID;
-                        LangCode TextLanguageID;/* can be NULL */
-                        if(!GetScriptInfoFromTextEncoding(
-                                                           encoding,
-                                                           &TextScriptID,
-                                                           &TextLanguageID))
-                        {
-                            ob_set_n(o, L"script", TextScriptID);
-                            ob_set_n(o, L"language", TextLanguageID);
-                        }
-                        
-                        /*
-                         ob_set_n(o, L"base", GetTextEncodingBase(encoding));
-                         ob_set_n(o, L"variant", GetTextEncodingVariant(encoding) );
-                         ob_set_n(o, L"format", GetTextEncodingFormat(encoding));
-
-                         */
-
-                        NSString *charset = (NSString *)CFStringConvertEncodingToIANACharSetName((CFStringEncoding)encoding);
-                        ob_set_s(o, L"charset", (const char *)[charset UTF8String]);
-                        
-                        UInt32 codePage = CFStringConvertEncodingToWindowsCodepage(encoding);
-                        if(codePage == kCFStringEncodingInvalidId){
-                            ob_set_n(o, L"code", -1);
-                        }else{
-                            ob_set_n(o, L"code", codePage);
-                        }
-                        collection_push(results, o);
-                    }
-                    
-                }
-                
-            }
-            TECDisposeSniffer(sniffer);
-        }
+            PA_ObjectRef options = PA_GetObjectParameter(params, 2);
+#if VERSIONWIN
+            DWORD dwFlag = 0L;
+            DWORD dwPrefWinCodePage = 0L;
 #endif
+            if(options) {
+#if VERSIONWIN
+                if(ob_is_defined(options, L"sourceTextType")) {
+                    CUTF8String _u8;
+                    if(ob_get_s(options, L"sourceTextType", &_u8)) {
+                        if(_u8 == (const uint8_t *)"7bit") {
+                            dwFlag = MLDETECTCP_7BIT;
+                        }
+                        if(_u8 == (const uint8_t *)"8bit") {
+                            dwFlag = MLDETECTCP_8BIT;
+                        }
+                        if(_u8 == (const uint8_t *)"dbcs") {
+                            dwFlag = MLDETECTCP_DBCS;
+                        }
+                        if(_u8 == (const uint8_t *)"html") {
+                            dwFlag = MLDETECTCP_HTML;
+                        }
+                    }
+                }
+                if(ob_is_defined(options, L"preferredCodePage")) {
+                    dwPrefWinCodePage = ob_get_n(options, L"preferredCodePage");
+                }
+#endif
+
+
+            }
+
+
+
+#if VERSIONWIN
+
+        IMultiLanguage2 *mlang = NULL;
+        CoCreateInstance(CLSID_CMultiLanguage, NULL, CLSCTX_INPROC_SERVER, IID_IMultiLanguage2, (void **)&mlang);
+
+        if(mlang)
+        {
+            int scores = count_windows_encodings;
+
+            //count_windows_encodings can be 0 if InitPlugin's CoCreateInstance
+            //failed (e.g. COM not initialized on this thread) or EnumCodePages
+            //returned nothing; guard before touching the buffer.
+            if(scores > 0)
+            {
+                std::vector<DetectEncodingInfo> encodings(scores);
+                INT size = len;
+                //honor the caller-supplied sourceTextType / preferredCodePage
+                //hints instead of ignoring them.
+                mlang->DetectInputCodepage(dwFlag, dwPrefWinCodePage, (CHAR *)bytes, (INT *)&size, encodings.data(), &scores);
+
+                //no HRESULT?
+                for(int i = 0; i < scores ; ++i)
+                {
+                    if(encodings[i].nLangID != 0)
+                    {
+                        DetectEncodingInfo encoding = encodings[i];
+
+                        MIMECPINFO codePageInfo;
+                        if(S_OK == mlang->GetCodePageInfo(encoding.nCodePage, encoding.nLangID, &codePageInfo)) {
+
+                            PA_ObjectRef o = PA_CreateObject();
+                            //DetectEncodingInfo
+                            UINT language = encoding.nLangID;
+                            if (language == (UINT)-1) {
+                                ob_set_n(o, L"language", -1);
+                            }
+                            else
+                            {
+                                ob_set_n(o, L"language", language);
+                            }
+                            ob_set_n(o, L"code", encoding.nCodePage);
+                            ob_set_n(o, L"percentage", encoding.nDocPercent);
+                            ob_set_n(o, L"confidence", encoding.nConfidence);
+                            //MIMECPINFO
+//                            ob_set_n(o, L"familyCodePage", codePageInfo.uiFamilyCodePage);
+                            ob_set_a(o, L"name", codePageInfo.wszDescription);
+                            ob_set_a(o, L"charset", codePageInfo.wszWebCharset);
+//                            ob_set_a(o, L"headerCharset", codePageInfo.wszHeaderCharset);
+//                            ob_set_a(o, L"bodyCharset", codePageInfo.wszBodyCharset);
+                            ob_set_a(o, L"fixedWidthFont", codePageInfo.wszFixedWidthFont);
+                            ob_set_a(o, L"proportionalFont", codePageInfo.wszProportionalFont);
+
+                            collection_push(results, o);
+                        }
+                    }
+                }
+            }
+
+            mlang->Release();
+        }
+#else
+            ItemCount count = count_windows_encodings;
+
+            //count can be 0 if InitPlugin's TECCountAvailableTextEncodings
+            //failed; guard before touching the buffer.
+            if(count > 0)
+            {
+                ItemCount num = 0;
+
+                std::vector<TextEncoding> _encodings(count);
+                TextEncoding *encodings = _encodings.data();
+
+                TECGetAvailableTextEncodings(encodings, count, &num);
+
+                if(num > 0)
+                {
+                    TECSnifferObjectRef sniffer;
+
+                    if(!TECCreateSniffer(&sniffer, encodings, num)) {
+                        ItemCount numTextEncodings = num;
+                        ItemCount maxErrs = len;
+                        ItemCount maxFeatures = len;
+                        std::vector<ItemCount> _numErrsArray(count);
+                        ItemCount *numErrsArray = _numErrsArray.data();
+                        std::vector<ItemCount> _numFeaturesArray(count);
+                        ItemCount *numFeaturesArray = _numFeaturesArray.data();
+                        OSStatus status = TECSniffTextEncoding(sniffer,
+                                                               (ConstTextPtr)bytes,
+                                                               (ByteCount)len,
+                                                               encodings,
+                                                               numTextEncodings,
+                                                               numErrsArray,
+                                                               maxErrs,
+                                                               numFeaturesArray,
+                                                               maxFeatures);
+                        if(!status){
+                            ByteCount length = 0L;
+                            TextEncoding unicode = CreateTextEncoding(kTextEncodingUnicodeDefault,
+                                                                      kTextEncodingDefaultVariant,
+                                                                      kUnicodeUTF8Format);
+                            for(unsigned int i = 0; i < numTextEncodings; ++i)
+                            {
+                                if(numErrsArray[i]){
+                                    break;
+                                }else{
+
+                                    TextEncoding encoding = encodings[i];
+
+                                    PA_ObjectRef o = PA_CreateObject();
+
+                                    /*
+                                     std::vector<char> _buf(MAX_LENGTH_FOR_ENCODING_NAME);
+                                     if(!GetTextEncodingName(
+                                                             encoding,
+                                                             kTextEncodingFullName,
+                                                             0,
+                                                             unicode,
+                                                             MAX_LENGTH_FOR_ENCODING_NAME,
+                                                             &length,
+                                                             NULL,
+                                                             NULL,
+                                                             (TextPtr)&_buf[0]))
+                                     {
+                                         CUTF8String u8 = CUTF8String((const uint8_t *)&_buf[0], length);
+                                         ob_set_s(o, L"name", (const char *)u8.c_str());
+                                     }
+                                     */
+
+                                    //CFStringGetNameOfEncoding can return NULL for
+                                    //encodings with no known display name.
+                                    NSString *name = (NSString *)CFStringGetNameOfEncoding((CFStringEncoding)encoding);
+                                    if(name) {
+                                        ob_set_s(o, L"name", (const char *)[name UTF8String]);
+                                    }
+
+                                    ScriptCode TextScriptID;
+                                    LangCode TextLanguageID;/* can be NULL */
+                                    if(!GetScriptInfoFromTextEncoding(
+                                                                       encoding,
+                                                                       &TextScriptID,
+                                                                       &TextLanguageID))
+                                    {
+                                        ob_set_n(o, L"script", TextScriptID);
+                                        ob_set_n(o, L"language", TextLanguageID);
+                                    }
+
+                                    /*
+                                     ob_set_n(o, L"base", GetTextEncodingBase(encoding));
+                                     ob_set_n(o, L"variant", GetTextEncodingVariant(encoding) );
+                                     ob_set_n(o, L"format", GetTextEncodingFormat(encoding));
+
+                                     */
+
+                                    //CFStringConvertEncodingToIANACharSetName can
+                                    //also return NULL; don't message a nil object.
+                                    NSString *charset = (NSString *)CFStringConvertEncodingToIANACharSetName((CFStringEncoding)encoding);
+                                    if(charset) {
+                                        ob_set_s(o, L"charset", (const char *)[charset UTF8String]);
+                                    }
+
+                                    UInt32 codePage = CFStringConvertEncodingToWindowsCodepage(encoding);
+                                    if(codePage == kCFStringEncodingInvalidId){
+                                        ob_set_n(o, L"code", -1);
+                                    }else{
+                                        ob_set_n(o, L"code", codePage);
+                                    }
+                                    collection_push(results, o);
+                                }
+
+                            }
+
+                        }
+                        TECDisposeSniffer(sniffer);
+                    }
+                }
+            }
+#endif
+        }
+        catch(const std::bad_alloc &)
+        {
+            //buf(len) failed to allocate. returnValue/results were already
+            //created above; make sure they still get attached and returned
+            //(with an explicit error flag) instead of being silently leaked
+            //by the outer catch(...) in PluginMain.
+            ob_set_s(returnValue, L"error", (const char *)"allocation failed");
+        }
+        catch(...)
+        {
+            ob_set_s(returnValue, L"error", (const char *)"unexpected error during encoding detection");
+        }
+    }
+    else if(len > NED_MAX_BLOB_SIZE)
+    {
+        ob_set_s(returnValue, L"error", (const char *)"blob exceeds maximum supported size");
     }
     
     ob_set_c(returnValue, L"encodings", results);
