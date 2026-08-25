@@ -118,7 +118,7 @@ void NED_Detect_encoding(PA_PluginParameters params) {
 #if VERSIONWIN
                 if(ob_is_defined(options, L"sourceTextType")) {
                     CUTF8String _u8;
-                    if(ob_get_s(options, L"sourceTextType", &_u8)) {
+                    if(ob_get_a(options, L"sourceTextType", &_u8)) {
                         if(_u8 == (const uint8_t *)"7bit") {
                             dwFlag = MLDETECTCP_7BIT;
                         }
