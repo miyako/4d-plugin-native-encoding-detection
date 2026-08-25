@@ -197,6 +197,10 @@
       <CallingConvention>Cdecl</CallingConvention>
       <OmitFramePointers>false</OmitFramePointers>
       <DisableSpecificWarnings>4146;4018;4800;4244;4068;4267</DisableSpecificWarnings>
+      <!-- Temporary diagnostic: prints the exact header-inclusion order to
+           stdout, to pin down where <winsock.h> is actually being pulled in
+           relative to our <winsock2.h> pre-include. Remove once resolved. -->
+      <AdditionalOptions>/showIncludes %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <OutputFile>$(TargetPath)</OutputFile>
