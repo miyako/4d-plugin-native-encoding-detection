@@ -26,6 +26,113 @@ Detects the character encoding of a BLOB of text by handing it to the host OS's 
 
 ---
 
+## Manual version and release workflows
+
+**Bump version** and **Build** are independent manual Actions workflows. Select
+the source branch in the Actions UI. Bump version offers only `patch`, `minor`,
+and `major`; it commits source metadata to that branch without creating a tag,
+release, or Build run. Build has **zero inputs** (no tag input), derives
+`vX.Y.Z` from the selected source, and publishes only a new tag and release.
+Neither workflow runs on a push. Every checkout uses the immutable dispatch
+`${{ github.sha }}`, not a moving branch or tag. No new branch restriction is
+introduced; Bump requires the selected ref to be a branch.
+
+The source version must be one strict `X.Y.Z` across all six
+`MARKETING_VERSION` and six `CURRENT_PROJECT_VERSION` assignments in
+`Native Encoding Detection.xcodeproj/project.pbxproj`, `Info.plist`, and the two
+version displays in `English.lproj/InfoPlist.strings`. Supported Xcode references
+are preserved, as is an absent optional `CFBundleVersion`; unknown/cyclic
+references, inconsistent values, duplicate keys (including quoted localized
+keys), and unsupported serialization fail before a bump writes anything.
+Rewrites preserve BOMs, each line ending (including CR-only/mixed files), modes,
+whitespace, copyright, and unrelated bytes. Prebuilt bundles/archives,
+dependencies, Windows project metadata, manifests, schema versions, and 4D
+data/catalog/localization counters are not version inputs.
+
+### Version authority and intake repair
+
+The original workflow is evidence for coordination, not independent build
+numbering:
+
+| Evidence | Meaning |
+| --- | --- |
+| `2a22674`, `mv` | Earlier header chose marketing first and current only as fallback. Rename-follow history traces the source plist and English strings to their original nested paths. |
+| `d04bbca`, `Rework CI workflows and sync version fields` | Later header explicitly promises to write both `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` and both plist version keys. The commit synchronized the project/plist to `1.0.8`; this explicit coordinated contract supersedes the earlier fallback wording. |
+| `e5b7e1b`, `6a88518` | The buggy marketing-first body subsequently advanced only marketing and the source plist to `1.0.10`, leaving all six current/build fields at `1.0.8`. |
+| Source resource wiring | The Xcode Resources phase copies `English.lproj/InfoPlist.strings`, still displaying `1.0.0`, into the built bundle. `Info.plist` is the configured source plist. |
+
+This migration repairs only those six current/build fields and the two
+localized displays to the **existing `1.0.10`**, without incrementing intake,
+adding an absent `CFBundleVersion`, rewriting the plist, changing the CR-only
+localization/copyright, or modifying prebuilt metadata. Build never repairs
+drift automatically.
+
+The remote already has `v1.0.10`. Intake intentionally does not create a new
+release version: a maintainer must run Bump version before a future Build can
+publish a fresh version; building the intake version stops at availability.
+
+The implementation adapts the full helpers/tests from
+[`4d-plugin-arguments` at `38a45cd`](https://github.com/miyako/4d-plugin-arguments/tree/38a45cd0e30dc015ed430e8dd3c95c5c31f4a1fc)
+and compares the coordinated
+[`process` at `ec2611e`](https://github.com/miyako/4d-plugin-process/tree/ec2611e6bbe97e87982cb84bb603462d0458612c)
+with the independent-build contracts in
+[`common-string-algorithm` at `2606a68`](https://github.com/miyako/4d-plugin-common-string-algorithm/tree/2606a68201866ec9fcbb38b51462d79215f504ef)
+and corrected
+[`window-button` at `3f14fac`](https://github.com/miyako/4d-plugin-window-button/tree/3f14facb9aaaaff0e22eeb8e07531163680c3a8a).
+Independent build policy is not imported into this coordinated project.
+
+### Publication safety and manual recovery
+
+Bump requires a clean checkout, the exact selected remote branch SHA, and a
+source-only, single-parent direct-child commit with the Copilot coauthor trailer.
+An executable pre-push guard is mandatory both before editing and immediately
+before pushing. It checks Git's advertised old SHA, literal new SHA/HEAD, target
+branch, parentage, and exactly one update, rejecting advance/rewind/deletion and
+same-result races. Pushes are nonforce with both `push.followTags=false` and
+`--no-follow-tags`.
+
+Build retains Windows x64/MSBuild v143/Windows SDK 10.0 and macOS universal
+arm64+x86_64/Xcode Default, the deployment override, dependencies, resources,
+`windows-binaries` artifact, all six signing/notary secret names, and ZIP/DMG
+asset names (`Native Encoding Detection-X.Y.Z.zip` and `.dmg`). It invalidates
+only stale native products, requires exact output paths and source-matching
+bundle metadata, verifies both architectures and the signature, requires
+`Accepted` for **both** notarizations, then staples the DMG. No native build,
+signing, notarization, or 4D execution is part of the local test suite.
+
+All branches share the constant `release-publication` concurrency group with
+cancellation disabled. Before native work, and again **after every native,
+signing, notarization, and staple gate**, publication checks the exact remote tag
+and authenticated, paginated releases (including drafts). Every page/entry must
+be valid; 404/auth/network/malformed/later-page failures are errors, never
+absence. An atomic create-only `POST git/refs` pins the tag to the selected SHA;
+remote verification precedes a separate `POST releases` with explicit public,
+nonprerelease fields and the original empty release body (no generated notes).
+Assets are POSTed only to the newly returned release ID.
+
+Existing tags/releases are never reused, updated, deleted, or clobbered. There
+is no automatic rollback or retry, including when a response is ambiguous:
+**partial tags, public releases, and successful earlier uploads remain**.
+On failure, inspect the run's selected SHA/tag and remote tag, draft/public
+release, and asset state before any further action. A maintainer must decide
+whether to finish recovery manually or bump the source to a fresh version.
+Do not blindly rerun publication; an existing tag or release deliberately
+blocks it. A branch race likewise requires a fresh Bump dispatch after review,
+not a forced push.
+
+### Local workflow checks
+
+Run `actionlint .github/workflows/*.yml` and
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s .github/tests -v`.
+PowerShell (`pwsh`) enables the Windows shell harness. Tests derive live fixture
+versions and also use stable fixtures, disposable local bare Git remotes,
+mocked authenticated API responses, and a closed-PATH native-tool stub harness.
+They cover advertised-SHA races, initial/late hook loss, merge commits,
+source-only commits, page-two/API failures, retained partial publication,
+byte/mode/endings/reference/duplicate-key handling, exclusions, exact native
+outputs, architectures, signing, notarization, and stapling. No test dispatches
+Actions or publishes to GitHub.
+
 ## NED Detect encoding
 
 ### Syntax
