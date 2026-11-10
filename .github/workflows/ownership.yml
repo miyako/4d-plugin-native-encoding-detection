@@ -1,0 +1,36 @@
+name: Ownership regression
+
+on:
+  push:
+    paths:
+      - '4D Plugin API/**'
+      - '4DPlugin-Native-Encoding-Detection.*'
+      - 'support/**'
+      - '.github/tests/ownership_host.mm'
+      - '.github/tests/test_ownership.py'
+      - '.github/tests/ownership-audit.md'
+      - '.github/workflows/ownership.yml'
+  pull_request:
+    paths:
+      - '4D Plugin API/**'
+      - '4DPlugin-Native-Encoding-Detection.*'
+      - 'support/**'
+      - '.github/tests/ownership_host.mm'
+      - '.github/tests/test_ownership.py'
+      - '.github/tests/ownership-audit.md'
+      - '.github/workflows/ownership.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ownership:
+    name: Unsigned ownership harness
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual sources and run ownership matrix
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 .github/tests/test_ownership.py
